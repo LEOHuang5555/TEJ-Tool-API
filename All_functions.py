@@ -1,26 +1,22 @@
 
 import tejapi 
 tejapi.ApiConfig.api_base="http://10.10.10.66"
-tejapi.ApiConfig.api_key = "3jUCETU2KiPwGJeyETYOQd1TCoDoxX"
+tejapi.ApiConfig.api_key = "YOURKEY"
 tejapi.ApiConfig.ignoretz = True
 import pandas as pd
 import numpy as np
 import datetime
 
+# map_table: table_name, od
+map_table = pd.read_excel('columns_group.xlsx',sheet_name='table_od')
+# merge_keys: od, merge_keys
+merge_keys = pd.read_excel('columns_group.xlsx',sheet_name='merge_keys')
 
 def get_fin_acc_code():
     acc_info = tejapi.get('TWN/AINVFACC_INFO_C',
                         paginate = True,
                         chinese_column_name=False)
     return acc_info['acct_code'].to_list()
-
-# 取得每張 table 的欄位名稱(internal_code)
-trading_columns_group = tejapi.table_info('TWN/APRCD1')['filters']
-all_fin_acc_code = get_fin_acc_code()
-fin_columns_group = ['coid', 'mdate', 'fin_od'] + get_fin_acc_code()
-alternative_group = tejapi.table_info('TWN/ASHR1')['filters']
-share_dist_group = tejapi.table_info('TWN/ADCSHR')['filters']
-monthly_revenue_group = tejapi.table_info('TWN/ASALE')['filters']
 
 def get_history_data(ticker, columns = None, start = '2005-01-01', end = datetime.datetime.now(), transfer_to_chinese = True):
     all_tables = triggers(ticker, columns, start, end, transfer_to_chinese)
@@ -54,7 +50,15 @@ def get_history_data(ticker, columns = None, start = '2005-01-01', end = datetim
     return data
     
 
+
 def triggers(ticker, columns = None, start = '2005-01-01', end = datetime.datetime.now(), transfer_to_chinese = True):
+    # 取得每張 table 的欄位名稱(internal_code)
+    trading_columns_group = tejapi.table_info('TWN/APRCD1')['filters']
+    all_fin_acc_code = get_fin_acc_code()
+    fin_columns_group = ['coid', 'mdate', 'fin_od'] + get_fin_acc_code()
+    alternative_group = tejapi.table_info('TWN/ASHR1')['filters']
+    share_dist_group = tejapi.table_info('TWN/ADCSHR')['filters']
+    monthly_revenue_group = tejapi.table_info('TWN/ASALE')['filters']
     market_columns = [c for c in columns if c in trading_columns_group]
     fin_columns = [c for c in columns if c in fin_columns_group]
     # fin_columns = TransferInternalCode([c for c in columns if c in fin_columns_group], 'fin')
@@ -83,8 +87,6 @@ def triggers(ticker, columns = None, start = '2005-01-01', end = datetime.dateti
         announce_date = get_announce_date(ticker=ticker)
         # announce date with financial data
         # fin_data = fin_data.merge(announce_date, left_on = ['coid', 'mdate', 'fin_od'], right_on=['coid', 'mdate', 'fin_od'], how='left')
-        print(announce_date.columns)
-        print(fin_data.columns)
         fin_data = fin_data.merge(announce_date, on = ['coid', 'mdate', 'fin_od'] , how='left')
         # a_dd:發布日
         fin_data = days.merge(fin_data, left_on='all_dates', right_on = 'a_dd', how = 'left').ffill()
@@ -195,10 +197,7 @@ def TransferInternalCode(series:list, groups):
             
     return result
 
-# map_table: table_name, od
-map_table = pd.read_excel('columns_group.xlsx',sheet_name='table_od')
-# merge_keys: od, merge_keys
-merge_keys = pd.read_excel('columns_group.xlsx',sheet_name='merge_keys')
+
 
 def merge_1_1(var_dict, table1:str, table2:str):
     if len(var_dict[table1]) >= len(var_dict[table2]):
