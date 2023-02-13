@@ -6,11 +6,7 @@ tejapi.ApiConfig.ignoretz = True
 import pandas as pd
 import numpy as np
 import datetime
-
-# map_table: table_name, od
-map_table = pd.read_excel('columns_group.xlsx',sheet_name='table_od')
-# merge_keys: od, merge_keys
-merge_keys = pd.read_excel('columns_group.xlsx',sheet_name='merge_keys')
+from parameters import *
 
 def get_fin_acc_code():
     acc_info = tejapi.get('TWN/AINVFACC_INFO_C',
