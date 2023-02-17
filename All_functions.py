@@ -1,6 +1,6 @@
 
 import tejapi 
-tejapi.ApiConfig.api_base="http://10.10.10.66"
+tejapi.ApiConfig.api_base="YOURBASE"
 tejapi.ApiConfig.api_key = "YOURKEY"
 tejapi.ApiConfig.ignoretz = True
 import pandas as pd
