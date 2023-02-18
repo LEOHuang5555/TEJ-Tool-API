@@ -54,15 +54,7 @@ def triggers(ticker, columns = None, start = '2013-01-01', end = datetime.dateti
                             mdate = {'gte':start,'lte':end},
                             opts= {'columns':fin_company_columns})
             fin_data = pd.concat([fin_data, data])
-        # announce date
-        # announce_date = get_announce_date(ticker=ticker)
-        # announce date with financial data
-        # fin_data = fin_data.merge(announce_date, left_on = ['coid', 'mdate', 'fin_od'], right_on=['coid', 'mdate', 'fin_od'], how='left')
-        # print(announce_date.columns)
-        # print(fin_data.columns)
-        # fin_data = fin_data.merge(announce_date, on = ['coid', 'mdate', 'fin_od'] , how='left')
-        # a_dd:發布日
-        # financial data ipsale to dayily basis 
+        # financial data upscale to dayily basis 
         fin_data = days.merge(fin_data, left_on='all_dates', right_on = 'annd', how = 'left').ffill()
         
     # get stock price data
@@ -98,7 +90,6 @@ def triggers(ticker, columns = None, start = '2013-01-01', end = datetime.dateti
         monthly_rev = pd.DataFrame()
         for i in ticker:
             # stock price
-            # 修改Table
             data = tejapi.get('TWN/APISALE',
                             coid = i,
                             paginate = True,
@@ -114,7 +105,6 @@ def triggers(ticker, columns = None, start = '2013-01-01', end = datetime.dateti
         share_dist = pd.DataFrame()
         for i in ticker:
             # stock price
-            # 修改Table
             data = tejapi.get('TWN/APISHRACTW',
                             coid = i,
                             paginate = True,
@@ -130,7 +120,6 @@ def triggers(ticker, columns = None, start = '2013-01-01', end = datetime.dateti
 
 
 def get_announce_date(ticker, transfer_to_chinese = False):
-    # option_dict = {}
     data = tejapi.get('TWN/AINVFINQA',
                     coid = ticker,
                     paginate = True,
