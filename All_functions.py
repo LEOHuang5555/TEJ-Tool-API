@@ -6,93 +6,71 @@ tejapi.ApiConfig.ignoretz = True
 import pandas as pd
 import numpy as np
 import datetime
-from parameters import *
+import parameters as para
 
-def get_fin_acc_code():
-    acc_info = tejapi.get('TWN/AINVFACC_INFO_C',
-                        paginate = True,
-                        chinese_column_name=False)
-    return acc_info['acct_code'].to_list()
 
-def get_history_data(ticker, columns = None, start = '2005-01-01', end = datetime.datetime.now(), transfer_to_chinese = True):
+
+def get_history_data(ticker, columns = None, start = '2013-01-01', end = datetime.datetime.now(), transfer_to_chinese = True):
     all_tables = triggers(ticker, columns, start, end, transfer_to_chinese)
     # 搜尋觸發到那些 table
     trigger_tables = [i for i in all_tables.keys() if i in ['fin_data', 'stk_price', 'share_dist','monthly_rev','overbought']]
     # 根據 OD 進行排序
-    trigger_tables.sort(key = lambda x: map_table.loc[map_table['TABLE_NAME']==x, 'OD'].item())
-    check = map_table.merge(merge_keys)
-    funct_map = funct_dict()
+    trigger_tables.sort(key = lambda x: para.map_table.loc[para.map_table['TABLE_NAME']==x, 'OD'].item())
+    table_keys = para.map_table.merge(para.merge_keys)
+    
     # tables 兩兩合併
     for i in range(len(trigger_tables)-1):
+        # 
         # keys
-        left_keys = check.loc[check['TABLE_NAME']==trigger_tables[i], 'KEYS'].tolist()
-        right_keys = check.loc[check['TABLE_NAME']==trigger_tables[i+1], 'KEYS'].tolist()
-        # od
-        od1 = map_table.loc[map_table['TABLE_NAME']==trigger_tables[i], 'OD'].item()
-        od2 = map_table.loc[map_table['TABLE_NAME']==trigger_tables[i+1], 'OD'].item()
-        if i == 0:
-            data = funct_map[(od1, od2)](all_tables, trigger_tables[i], trigger_tables[i+1])
-            # print(len(data))
-            # print(funct_map[(od1, od2)])
-        else:
-            left_keys = check.loc[check['TABLE_NAME']==trigger_tables[0], 'KEYS'].tolist()
-            right_keys = check.loc[check['TABLE_NAME']==trigger_tables[i+1], 'KEYS'].tolist()
-            data = data.merge(all_tables[trigger_tables[i+1]], left_on = left_keys, right_on = right_keys, how = 'left', suffixes = ('', '_surfeit')).ffill()
-            # 刪除多於欄位
-            data = data[[i for i in data.columns if not i.__contains__('_surfeit')]]
-            # print(len(data))
-
-        # print(left_keys, right_keys)
-    return data
+        left_keys = table_keys.loc[table_keys['TABLE_NAME']==trigger_tables[i], 'KEYS'].tolist()
+        right_keys = table_keys.loc[table_keys['TABLE_NAME']==trigger_tables[i+1], 'KEYS'].tolist()
+        exec(f'''data = consecutive_merge(all_tables, {trigger_tables[i]}, {trigger_tables[i+1]}, {left_keys}, {right_keys}, {i})''') 
+    return locals()['data']
     
 
-
-def triggers(ticker, columns = None, start = '2005-01-01', end = datetime.datetime.now(), transfer_to_chinese = True):
-    # 取得每張 table 的欄位名稱(internal_code)
-    trading_columns_group = tejapi.table_info('TWN/APRCD1')['filters']
-    all_fin_acc_code = get_fin_acc_code()
-    fin_columns_group = ['coid', 'mdate', 'fin_od'] + get_fin_acc_code()
-    alternative_group = tejapi.table_info('TWN/ASHR1')['filters']
-    share_dist_group = tejapi.table_info('TWN/ADCSHR')['filters']
-    monthly_revenue_group = tejapi.table_info('TWN/ASALE')['filters']
-    market_columns = [c for c in columns if c in trading_columns_group]
-    fin_columns = [c for c in columns if c in fin_columns_group]
+def triggers(ticker, columns = None, start = '2013-01-01', end = datetime.datetime.now(), transfer_to_chinese = True):
+    market_columns = [c for c in columns if c in para.trading_columns_group]
+    fin_company_columns = [c for c in columns if c in para.fin_company_group]
     # fin_columns = TransferInternalCode([c for c in columns if c in fin_columns_group], 'fin')
-    alternative_columns = [c for c in columns if c in alternative_group]
-    monthly_columns = [c for c in columns if c in monthly_revenue_group]
-    main_holder_columns = [c for c in columns if c in share_dist_group]
+    alternative_columns = [c for c in columns if c in para.alternative_group]
+    monthly_columns = [c for c in columns if c in para.monthly_revenue_group]
+    main_holder_columns = [c for c in columns if c in para.share_dist_group]
     # transfer fin_ann_date to daily basis
     # 營業日
     days = pd.date_range(start=start, end=end, freq='D')
     days = pd.DataFrame({'all_dates':days})
     # get fin data
-    if len(fin_columns)>0 and sorted(fin_columns) != ['coid','mdate']:
+    if len(para.fin_company_group)>0 and sorted(para.fin_company_group) != ['coid','mdate']:
         fin_data = pd.DataFrame()
-        if 'fin_od' not in fin_columns:
-            fin_columns+=['fin_od']
+        # if 'annd' not in para.fin_company_group:
+        fin_company_columns+=['annd', 'no', 'fin_type']
+        fin_company_columns = list(set(fin_company_columns))
         for i in ticker:
         # financial data
-            data = tejapi.get('TWN/AINVFINQ',
+            data = tejapi.get('TWN/AFESTM1',
                             coid = i,
                             paginate = True,
                             chinese_column_name=transfer_to_chinese,
                             mdate = {'gte':start,'lte':end},
-                            opts= {'pivot':True, 'columns':fin_columns})
+                            opts= {'columns':fin_company_columns})
             fin_data = pd.concat([fin_data, data])
         # announce date
-        announce_date = get_announce_date(ticker=ticker)
+        # announce_date = get_announce_date(ticker=ticker)
         # announce date with financial data
         # fin_data = fin_data.merge(announce_date, left_on = ['coid', 'mdate', 'fin_od'], right_on=['coid', 'mdate', 'fin_od'], how='left')
-        fin_data = fin_data.merge(announce_date, on = ['coid', 'mdate', 'fin_od'] , how='left')
+        # print(announce_date.columns)
+        # print(fin_data.columns)
+        # fin_data = fin_data.merge(announce_date, on = ['coid', 'mdate', 'fin_od'] , how='left')
         # a_dd:發布日
-        fin_data = days.merge(fin_data, left_on='all_dates', right_on = 'a_dd', how = 'left').ffill()
+        # financial data ipsale to dayily basis 
+        fin_data = days.merge(fin_data, left_on='all_dates', right_on = 'annd', how = 'left').ffill()
         
     # get stock price data
     if len(market_columns)>0:
         stk_price = pd.DataFrame()
         for i in ticker:
             # stock price
-            data = tejapi.get('TWN/APRCD1',
+            data = tejapi.get('TWN/APIPRCD',
                             coid = i,
                             paginate = True,
                             chinese_column_name=transfer_to_chinese,
@@ -107,20 +85,21 @@ def triggers(ticker, columns = None, start = '2005-01-01', end = datetime.dateti
         for i in ticker:
             # stock price
             # 修改Table
-            data = tejapi.get('TWN/ASHR1',
+            data = tejapi.get('TWN/APISHRACT',
                             coid = i,
                             paginate = True,
                             chinese_column_name=transfer_to_chinese,
                             mdate = {'gte':start,'lte':end},
                             opts = {'columns':alternative_columns})
             overbought = pd.concat([overbought, data])
+
     # get monthly revenue data
     if len(monthly_columns)>0 and sorted(monthly_columns) != ['coid','mdate']:
         monthly_rev = pd.DataFrame()
         for i in ticker:
             # stock price
             # 修改Table
-            data = tejapi.get('TWN/ASALE',
+            data = tejapi.get('TWN/APISALE',
                             coid = i,
                             paginate = True,
                             chinese_column_name=transfer_to_chinese,
@@ -129,13 +108,14 @@ def triggers(ticker, columns = None, start = '2005-01-01', end = datetime.dateti
             monthly_rev = pd.concat([monthly_rev, data])
         # transfer to daily basis
         monthly_rev = days.merge(monthly_rev, left_on=['all_dates'], right_on = ['annd_s'], how='left').ffill()
+
     # get weekly share holders' distrbution
     if len(main_holder_columns)>0 and sorted(main_holder_columns) != ['coid','mdate']:
         share_dist = pd.DataFrame()
         for i in ticker:
             # stock price
             # 修改Table
-            data = tejapi.get('TWN/ADCSHR',
+            data = tejapi.get('TWN/APISHRACTW',
                             coid = i,
                             paginate = True,
                             chinese_column_name=transfer_to_chinese,
@@ -194,49 +174,17 @@ def TransferInternalCode(series:list, groups):
     return result
 
 
-
-def merge_1_1(var_dict, table1:str, table2:str):
-    if len(var_dict[table1]) >= len(var_dict[table2]):
-        t1 = var_dict[table1]
-        t2 = var_dict[table2]
+def consecutive_merge(local_var, table1, table2, left_key, right_key, i=0):
+    if i == 0:
+        exec(f'''data = local_var['{table1}'].merge(local_var['{table2}'], left_on = {left_key}, right_on = {right_key}, how = 'left', suffixes = ('','_surfeit'))
+data = data.loc[:,~data.columns.str.contains('_surfeit')]''')
+        # exec(f'print(data)')
     else:
-        t1 = var_dict[table2]
-        t2 = var_dict[table1]
-    data = t1.merge(t2, on = ['coid', 'mdate'], how = 'left', suffixes = ('', '_surfeit')).ffill()
-    # 刪除多餘的欄位
-    data = data[[i for i in data.columns if not i.__contains__('_surfeit')]]
-    return data
+       
+        exec(f'''data = data.merge(local_var['{table2}'], left_on = {left_key}, right_on = {right_key}, how = 'left', suffixes = ('','_surfeit'))
+data = data.loc[:,~data.columns.str.contains('_surfeit')]''')
+        # exec(f'print(data)')       
+    return locals()['data']
 
-def merge_2_2(var_dict, table1:str, table2:str):
-    if len(var_dict[table1]) >= len(var_dict[table2]):
-        t1 = var_dict[table1]
-        t2 = var_dict[table2]
-    else:
-        t1 = var_dict[table2]
-        t2 = var_dict[table1]
-    data = t1.merge(t2, on = ['coid', 'all_dates'], how = 'left', suffixes = ('', '_surfeit')).ffill()
-    # 刪除多餘的欄位
-    data = data[[i for i in data.columns if not i.__contains__('_surfeit')]]
-    return data
 
-def merge_1_2(var_dict, table1:str, table2:str):
-    # 
-    if map_table.loc[map_table['TABLE_NAME']==table1, 'OD'].item() == 1:
-        t1 = var_dict[table1]
-        t2 = var_dict[table2]
-    else:
-        t1 = var_dict[table2]
-        t2 = var_dict[table1]
-    data = t1.merge(t2, left_on = ['coid', 'mdate'], right_on = ['coid', 'all_dates'], how = 'left' ,suffixes = ('', '_surfeit')).ffill()
-    # 刪除多餘的欄位
-    data = data[[i for i in data.columns if not i.__contains__('_surfeit')]]
-    return data
 
-def funct_dict():
-    funct_map = {
-    (1,1):merge_1_1,
-    (2,2):merge_2_2,
-    (1,2):merge_1_2,
-    (2,1):merge_1_2
-    }
-    return funct_map
