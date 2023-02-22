@@ -29,6 +29,6 @@ data = get_history_data(ticker=list_of_Stocks,columns= test_columns, transfer_to
 ```
 只需要給定股票代碼(ticker)、資料欄位(columns, ex: close_adj, debt, roe...)，即可自動合併資料，不需要訪問多個資料表和自行合併。
 
-### 持續進行中
+### On-going
 內部欄位編碼與中英文簡稱轉換功能<br>
 不同頻率間的數據呼叫(目前僅完成日頻率，未來預計完成周、月和年)<br>
