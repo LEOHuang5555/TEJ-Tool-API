@@ -1,32 +1,23 @@
 import pandas as pd
 import tejapi 
-tejapi.ApiConfig.api_base="YOURBASE"
-tejapi.ApiConfig.api_key = "YOURKEY"
+import datetime
+tejapi.ApiConfig.api_base="http://10.10.10.66"
+tejapi.ApiConfig.api_key = "3jUCETU2KiPwGJeyETYOQd1TCoDoxX"
 tejapi.ApiConfig.ignoretz = True
-import map_functions as mpf
+import API_mapping as mpf
 # from All_functions import get_fin_acc_code
 
-def get_fin_acc_code():
-    acc_info = tejapi.get('TWN/AINVFACC_INFO_C',
-                        paginate = True,
-                        chinese_column_name=False)
-    return acc_info['acct_code'].to_list()
+default_start = '2013-01-01'
+default_end = datetime.datetime.now().date().strftime('%Y-%m-%d')
+drop_keys = [ 'no','sem','fin_type','annd', 'annd_s']
 
 # 取得每張 table 的欄位名稱(internal_code)
-# 股價資料
-trading_columns_group = tejapi.table_info('TWN/APIPRCD')['filters']
-# all_fin_acc_code = get_fin_acc_code()
-# fin_columns_group = ['coid', 'mdate', 'fin_od'] + get_fin_acc_code()
-# 公司自結數
-fin_company_group = list(set(['coid', 'mdate', 'annd']+tejapi.table_info('TWN/AFESTM1')['filters']))
-# 董事會決議數
-fin_board_group = list(set(['coid', 'mdate', 'annd']+tejapi.table_info('TWN/AFESTMD')['filters']))
-# 籌碼資料
-alternative_group = tejapi.table_info('TWN/APISHRACT')['filters']
-# 集保資料
-share_dist_group = tejapi.table_info('TWN/APISHRACTW')['filters']
-# 月營收
-monthly_revenue_group = tejapi.table_info('TWN/APISALE')['filters']
+# get table_names, API_table
+fin_invest_tables = pd.read_excel('columns_group.xlsx', sheet_name='fin_invest_tables')
+# get table_names, columns
+table_columns = pd.read_excel('columns_group.xlsx', sheet_name='group')
+# get table_names, API_code
+table_API = pd.read_excel('columns_group.xlsx', sheet_name='API')
 
 # 取得 table_names, od, keys
 # map_table: table_name, od
@@ -36,8 +27,10 @@ merge_keys = pd.read_excel('columns_group.xlsx',sheet_name='merge_keys')
 
 # 映射函數
 funct_map = {
-    (1,1):mpf.merge_1_1,
-    (2,2):mpf.merge_2_2,
-    (1,2):mpf.merge_1_2,
-    (2,1):mpf.merge_1_2
-    }
+    'A0001':mpf.get_trading_data,
+    'A0002':mpf.get_fin_data,
+    'A0003':mpf.get_alternative_data
+}
+
+
+
