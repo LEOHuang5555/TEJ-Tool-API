@@ -16,7 +16,7 @@ data = tejapi.get('TWN/APRCD',coid='Y9999', mdate={'gt':'2018-01-01','lt':'2018-
 import tejapi
 tejapi.ApiConfig.api_key = "YOURAPIKEY"
 tejapi.ApiConfig.ignoretz = True
-from All_functions import *
+from TejToolAPI import *
 list_of_Stocks = ['2330','2303','2454', '2882', '2881']
 # 取得財務報表之欄位
 fin_codes = get_fin_acc_code()
