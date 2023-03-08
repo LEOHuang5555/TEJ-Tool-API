@@ -1,8 +1,8 @@
 import pandas as pd
 import datetime
 import tejapi 
-tejapi.ApiConfig.api_base="http://10.10.10.66"
-tejapi.ApiConfig.api_key = "3jUCETU2KiPwGJeyETYOQd1TCoDoxX"
+tejapi.ApiConfig.api_base="BASE"
+tejapi.ApiConfig.api_key = "YOURKEY"
 tejapi.ApiConfig.ignoretz = True
 import parameters as para
 
