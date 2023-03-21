@@ -8,7 +8,8 @@ tejapi.ApiConfig.api_key = "YOURAPIKEY"
 tejapi.ApiConfig.ignoretz = True
 data = tejapi.get('TWN/APRCD',coid='Y9999', mdate={'gt':'2018-01-01','lt':'2018-02-01'}, paginate=True)
 ```
-更多詳細資訊可參考官方網站: https://api.tej.com.tw/<br> ## Tool-API<br>
+更多詳細資訊可參考官方網站: https://api.tej.com.tw/<br> 
+## Tool-API<br>
 撈取資料方式:<br>
 - get_history_data
 ```python
