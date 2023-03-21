@@ -33,7 +33,8 @@ merge_keys = pd.read_excel('columns_group.xlsx',sheet_name='merge_keys')
 funct_map = {
     'A0001':mpf.get_trading_data,
     'A0002':mpf.get_fin_data,
-    'A0003':mpf.get_alternative_data
+    'A0003':mpf.get_alternative_data,
+    'A0004':mpf.get_fin_auditor
 }
 
 
