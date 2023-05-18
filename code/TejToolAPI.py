@@ -18,6 +18,7 @@ def get_history_data(ticker:list, columns:list = [], fin_type:list = ['A','Q','T
     transfer_to_chinese = kwargs.get('transfer_to_chinese', False)
     npartitions = kwargs.get('npartitions',  para.npartitions_local)
     all_tables = triggers(ticker = ticker, columns= columns, start= start, end= end,fin_type= fin_type, include_self_acc= include_self_acc, npartitions = npartitions)
+    # 針對自結損益和財簽資料作處理
     if include_self_acc == 'Y':
         try:
             data_concat = pd.concat([all_tables['fin_self_acc'], all_tables['fin_auditor']])
@@ -29,8 +30,6 @@ def get_history_data(ticker:list, columns:list = [], fin_type:list = ['A','Q','T
     trigger_tables = [i for i in all_tables.keys() if i in para.fin_invest_tables['TABLE_NAMES'].unique().tolist()]
     # 根據 OD 進行排序
     trigger_tables.sort(key = lambda x: para.map_table.loc[para.map_table['TABLE_NAMES']==x, 'OD'].item())
-    # 將 pandas dataframe 轉為 dask dataframe
-    # all_tables = to_daskDataFrame(all_tables, trigger_tables, npartitions=npartitions)
     # tables 兩兩合併
     history_data = consecutive_merge(all_tables,  trigger_tables)
     history_data = history_data.drop(columns=[i for i in history_data.columns if i in para.drop_keys])
@@ -41,7 +40,12 @@ def get_history_data(ticker:list, columns:list = [], fin_type:list = ['A','Q','T
         # transfer to English version
         lang_map = transfer_language_columns(history_data.columns)
     history_data = history_data.rename(columns= lang_map)
-    return history_data
+    # 檢查 npartitions
+    if history_data.npartitions > 1:
+        return history_data.compute(meta = {'mdate':'datetime64[ns]'})
+        # return history_data
+    else:
+        return history_data
 
 def to_daskDataFrame(locals, indexs, npartitions=para.npartitions_local):
     for i in indexs:
@@ -107,6 +111,7 @@ def triggers(ticker:list, columns:list = [], fin_type:list = ['A','Q','TTM'],  i
         api_code = para.table_API.loc[para.table_API['TABLE_NAMES']==table_name, 'API_CODE'].item()
         api_table = para.fin_invest_tables.loc[para.fin_invest_tables['TABLE_NAMES']==table_name,'API_TABLE'].item()
         if api_code == 'A0002' or api_code == 'A0004':
+            # print(api_table, selected_columns)
             exec(f'{table_name} = para.funct_map[api_code](api_table, ticker, selected_columns, start = start,  end = end, fin_type = fin_type, npartitions = npartitions)')
         else:
             exec(f'{table_name} = para.funct_map[api_code](api_table, ticker, selected_columns, start = start,  end = end, npartitions = npartitions)')
@@ -128,18 +133,14 @@ def consecutive_merge(local_var, loop_array):
         right_keys = table_keys.loc[table_keys['TABLE_NAMES']==loop_array[i], 'KEYS'].tolist()
         # pandas merge
         # data = data.merge(local_var[loop_array[i]], left_on = ['coid', 'mdate'], right_on = right_keys, how = 'left', suffixes = ('','_surfeit'))
-        
         # dask merge
         data = dd.merge(data, local_var[loop_array[i]], left_on = ['coid', 'mdate'], right_on = right_keys, how = 'left', suffixes = ('','_surfeit'))
         # 將已合併完的DF刪除，並釋放記憶體
         del local_var[loop_array[i]]
         gc.collect()
         data = data.loc[:,~data.columns.str.contains('_surfeit')]
-    # if data.npartitions > 1:
-    #     return data.compute()
-    # else:
-    #     return data
-    return data.compute()
+    data['mdate'] = dd.to_datetime(data['mdate'])
+    return data
 
 def get_trading_calendar(tickers, **kwargs):
     start = kwargs.get('start', para.default_start)
@@ -153,23 +154,19 @@ def get_trading_calendar(tickers, **kwargs):
                         paginate = True,
                         chinese_column_name=False,
                         mdate = {'gte':start,'lte':end},
-                        opts = {'columns':['coid','mdate']})
-        return data
-    trading_calendar = dd.from_delayed([dask.delayed(_get_data)(ticker) for ticker in tickers])
+                        opts = {'columns':['coid','mdate'], 'sort':{'coid.desc', 'mdate.desc'}})
+        if len(data)>1:
+            return data
+        else:
+            return pd.DataFrame({'coid': pd.Series(dtype='object'), 'mdate': pd.Series(dtype='datetime64[ns]')})
+    
+    meta = pd.DataFrame({'coid': pd.Series(dtype='object'), 'mdate': pd.Series(dtype='datetime64[ns]')})
+    trading_calendar = dd.from_delayed([dask.delayed(_get_data)(ticker) for ticker in tickers], meta = meta)
+    # trading_calendar = dd.from_delayed([dask.delayed(_get_data)(ticker) for ticker in tickers])
     trading_calendar = trading_calendar.repartition(npartitions=npartitions)
-
-    # for i in tickers:
-    #     # stock price
-    #     data = tejapi.get('TWN/APIPRCD',
-    #                     coid = i,
-    #                     paginate = True,
-    #                     chinese_column_name=False,
-    #                     mdate = {'gte':start,'lte':end},
-    #                     opts = {'columns':['coid','mdate']})
-    #     trading_calendar = pd.concat([trading_calendar, data])
+    trading_calendar['mdate'] = dd.to_datetime(trading_calendar['mdate'])
 
     return trading_calendar
-
 
 
 
