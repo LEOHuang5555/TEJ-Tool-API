@@ -216,7 +216,6 @@ def generate_multicalendars(tickers, **kwargs):
     
     meta = pd.DataFrame({'coid': pd.Series(dtype='object'), 'all_dates': pd.Series(dtype='datetime64[ns]')})
     D_cal = dd.from_delayed([dask.delayed(get_daily_calendar)(ticker) for ticker in tickers], meta = meta)
-    # D_cal = D_cal.reset_index(drop=True)
     # D_cal = D_cal.set_index('all_dates', drop=False).reset_index(drop=True)
     D_cal = D_cal.repartition(npartitions=npartitions)
     
