@@ -5,7 +5,7 @@ tejapi.ApiConfig.ignoretz = True
 import dask.dataframe as dd
 import pandas as pd
 import gc
-import parameters as para
+from TejToolAPI import parameters as para
 import dask
 import dask.dataframe as dd
 
