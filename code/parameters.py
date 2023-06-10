@@ -1,6 +1,6 @@
 import pandas as pd
 import datetime
-from TejToolAPI import Map_Dask_API as dask_mpf
+from . import Map_Dask_API as dask_mpf
 import multiprocessing
 import os
 
