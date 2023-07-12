@@ -1,24 +1,19 @@
+import tejapi
 import pandas as pd
 import datetime
-import tejapi 
-tejapi.ApiConfig.ignoretz = True
 import numpy as np
 import dask.dataframe as dd
-import dask 
-import multiprocessing
+import dask
 import gc
+from . import parameters as para
 
-npartitions_local = multiprocessing.cpu_count()
-
-default_start = '2013-01-01'
-default_end = datetime.datetime.now().date().strftime('%Y-%m-%d')
 
 def get_fin_data(table, tickers, columns=[], **kwargs):
-    start = kwargs.get('start', default_start)
-    end = kwargs.get('end', default_end)
+    start = kwargs.get('start', para.default_start)
+    end = kwargs.get('end', para.default_end)
     fin_type = kwargs.get('fin_type', ['A', 'Q', 'TTM'])
     # transfer_to_chinese = False
-    npartitions = kwargs.get('npartitions', npartitions_local)
+    npartitions = kwargs.get('npartitions', para.npartitions_local)
     
     # 將需要的 column 選出
     columns += ['coid', 'mdate', 'annd', 'no', 'key3']
@@ -28,22 +23,33 @@ def get_fin_data(table, tickers, columns=[], **kwargs):
     def get_data(table, tickers, columns, start, end, fin_type):
         data_sets = tejapi.get(table,
                         coid=tickers,
+                        key3 = fin_type,
                         paginate=True,
                         chinese_column_name=False,
                         mdate={'gte': start, 'lte': end},
-                        opts={'columns': columns, 'sort':{'coid.desc', 'mdate.asc', 'annd.asc', 'no.asc'}})
+                        opts={'columns': columns, 'sort':{'coid.asc', 'mdate.asc', 'annd.asc', 'no.asc'}})
         
         # 
         if len(data_sets) < 1:
-            return pd.DataFrame({'coid': pd.Series(dtype='object'),
-                                  'mdate': pd.Series(dtype='datetime64[ns]'),
-                                  'key3': pd.Series(dtype='object'),
-                                  'no': pd.Series(dtype='object'),
-                                  'annd':pd.Series(dtype='datetime64[ns]')
-                                    })
+            # return pd.DataFrame({'coid': pd.Series(dtype='object'),
+            #                       'mdate': pd.Series(dtype='datetime64[ns]'),
+            #                       'key3': pd.Series(dtype='object'),
+            #                       'no': pd.Series(dtype='object'),
+            #                       'annd':pd.Series(dtype='datetime64[ns]')
+            #                         })
+            fabricate_output = {}
+            columns_type = tejapi.table_info(table)['columns']
+            for i in columns:
+                if 'char' in columns_type[i]['type']:
+                    fabricate_output[i] = pd.Series(dtype='object')
 
-        # select certain fin_type
-        data_sets = get_certain_fin_type(data_sets, fin_type)
+                elif 'datetime' in columns_type[i]['type']:
+                    fabricate_output[i] = pd.Series(dtype='datetime64[ns]')
+
+                else:
+                    fabricate_output[i] = pd.Series(dtype='float64')
+
+            return pd.DataFrame(fabricate_output)
 
         # parallel fin_type to columns 
         data_sets = fin_pivot(data_sets, remain_keys=['coid', 'mdate', 'no', 'annd'])
@@ -57,7 +63,7 @@ def get_fin_data(table, tickers, columns=[], **kwargs):
     ticker_partitions = get_partition_group(tickers=tickers, npartitions=npartitions)
     
     # Submit jobs to the parallel cores
-    data_sets = dd.from_delayed([dask.delayed(get_data)(table=table, tickers = tickers[(i-1)*npartitions:i*npartitions]+['2330'], columns = columns, start = start, end = end, fin_type = fin_type) for i in range(1, ticker_partitions)], meta = meta)
+    data_sets = dd.from_delayed([dask.delayed(get_data)(table=table, tickers = tickers[(i-1)*npartitions:i*npartitions], columns = columns, start = start, end = end, fin_type = fin_type) for i in range(1, ticker_partitions)], meta = meta)
     
     # If ticker smaller than defaulted partitions, then transform it into defaulted partitions
     if data_sets.npartitions < npartitions:
@@ -80,9 +86,9 @@ def get_most_recent_date(data, sort_keys, subset, keep_mothod):
 
 def get_trading_data(table, tickers, columns = [], **kwargs):
     # Setting default value of the corresponding parameters
-    start = kwargs.get('start', default_start)
-    end = kwargs.get('end', default_end)
-    npartitions = kwargs.get('npartitions',  npartitions_local)
+    start = kwargs.get('start', para.default_start)
+    end = kwargs.get('end', para.default_end)
+    npartitions = kwargs.get('npartitions',  para.npartitions_local)
 
     # 自動補上 coid, mdate
     columns += ['coid', 'mdate']
@@ -94,7 +100,21 @@ def get_trading_data(table, tickers, columns = [], **kwargs):
                         paginate = True,
                         chinese_column_name=False,
                         mdate = {'gte':start,'lte':end},
-                        opts = {'columns':columns, 'sort':{'coid.desc', 'mdate.asc'}})
+                        opts = {'columns':columns, 'sort':{'coid.asc', 'mdate.asc'}})
+        # 
+        if len(data) < 1:
+            fabricate_output = {}
+            columns_type = tejapi.table_info(table)['columns']
+            for i in columns:
+                if 'char' in columns_type[i]['type']:
+                    fabricate_output[i] = pd.Series(dtype='object')
+
+                elif 'datetime' in columns_type[i]['type']:
+                    fabricate_output[i] = pd.Series(dtype='datetime64[ns]')
+
+                else:
+                    fabricate_output[i] = pd.Series(dtype='float64')
+        
         return data
     
     # Define the meta of the dataframe
@@ -104,7 +124,7 @@ def get_trading_data(table, tickers, columns = [], **kwargs):
     ticker_partitions = get_partition_group(tickers=tickers, npartitions=npartitions)
     
     # Submit jobs to the parallel cores
-    data_sets = dd.from_delayed([dask.delayed(get_data)(table, tickers[(i-1)*npartitions:i*npartitions]+['2330'], columns, start, end) for i in range(1, ticker_partitions)], meta = meta)
+    data_sets = dd.from_delayed([dask.delayed(get_data)(table, tickers[(i-1)*npartitions:i*npartitions], columns, start, end) for i in range(1, ticker_partitions)], meta = meta)
     
     # If ticker smaller than defaulted partitions, then transform it into defaulted partitions
     if data_sets.npartitions < npartitions:
@@ -115,22 +135,26 @@ def get_trading_data(table, tickers, columns = [], **kwargs):
     return data_sets
 
 def get_alternative_data(table, tickers=[], columns = [], **kwargs):
-    start = kwargs.get('start', default_start)
-    end = kwargs.get('end', default_end)
+    start = kwargs.get('start', para.default_start)
+    end = kwargs.get('end', para.default_end)
     # transfer_to_chinese = False
-    npartitions = kwargs.get('npartitions', npartitions_local)
+    npartitions = kwargs.get('npartitions', para.npartitions_local)
 
     # 自動補上 coid, mdate, 發布日
     if table == 'TWN/APISALE':
         # 月營收
+        annd = 'annd_s'
         columns += ['coid', 'mdate','annd_s']
         columns = list(set(columns))
     else:
         # 集保資料 
+        annd = 'edate1'
         columns += ['coid','mdate','edate1']
         columns = list(set(columns))
     # 營業日
-    days = generate_multicalendars(tickers, start = start, end = end)
+    # days = generate_multicalendars(tickers, start = start, end = end)
+    days = para.exc.calendar
+    days = days.rename(columns = {'zdate':'all_dates'})
 
     # alternative data
     data_sets = tejapi.get(table,
@@ -138,29 +162,41 @@ def get_alternative_data(table, tickers=[], columns = [], **kwargs):
                     paginate = True,
                     chinese_column_name=False,
                     mdate = {'gte':start,'lte':end},
-                    opts = {'columns':columns, 'sort':{'coid.desc', 'mdate.desc'}})
+                    opts = {'columns':columns, 'sort':{'coid.asc', 'mdate.asc'}})
+    # 創建一個向量化的函數
+    vectorized_annd_adjusted = np.vectorize(annd_adjusted)
+
+    # 所有不同的發布日
+    uni_dates = pd.to_datetime(data_sets[annd].unique())
+
+    # 傳入 ExchangeCalendar 物件
+    result = vectorized_annd_adjusted(para.exc, uni_dates)
+
+    # Create a mapping dictionary
+    dict_map = {uni_dates[i]:result[i] for i in range(len(result))}
+
+    # Adjust non-trading announce date to next trading date.
+    data_sets[annd] = data_sets[annd].map(dict_map)
+    
     data_sets = data_sets.drop(columns=['mdate'])
 
-    if table == 'TWN/APISALE':
-        data_sets = dd.merge(days, data_sets, how='left', left_on = ['all_dates', 'coid'], right_on=['annd_s', 'coid'])
-    else:
-        data_sets = dd.merge(days, data_sets, how='left', left_on = ['all_dates', 'coid'], right_on=['edate1', 'coid'])
-    
+    data_sets = dd.merge(days, data_sets, how='left', left_on = ['all_dates'], right_on=[annd])
+
     del days
     gc.collect()
 
-    data_sets = data_sets.groupby('coid', group_keys = False).apply(fillna_multicolumns, meta = data_sets)
+    data_sets = data_sets.groupby('coid', group_keys = False).apply(fillna_multicolumns)
 
     return data_sets
 
 
 def get_fin_auditor(table, tickers, columns=[], **kwargs):
     # Setting defualt value of the parameters
-    start = kwargs.get('start', default_start)
-    end = kwargs.get('end', default_end)
+    start = kwargs.get('start', para.default_start)
+    end = kwargs.get('end', para.default_end)
     fin_type = kwargs.get('fin_type', ['A', 'Q', 'TTM'])
     # transfer_to_chinese = False
-    npartitions = kwargs.get('npartitions', npartitions_local)
+    npartitions = kwargs.get('npartitions', para.npartitions_local)
 
     # 自動補上 coid, mdate
     columns += ['coid', 'mdate','key3','no','annd']
@@ -168,59 +204,75 @@ def get_fin_auditor(table, tickers, columns=[], **kwargs):
 
     # get fin data
     def _get_data(table, tickers, columns, start, end, fin_type):
+        # try:
+        columns.remove('annd')
         data_sets = tejapi.get(table,
                             coid = tickers,
+                            key3 = fin_type, 
                             paginate = True,
                             chinese_column_name=False,
                             mdate = {'gte':start,'lte':end},
-                            opts= {'pivot':True, 'sort':{'coid.desc', 'mdate.asc', 'key3.asc', 'no.asc'}})
+                            opts= {'columns':columns, 'sort':{'coid.asc', 'mdate.asc', 'key3.asc', 'no.asc'}, 'pivot':True})
         
+        columns.append('annd')
+        # print(fin_type)
         if len(data_sets) < 1:
-            return pd.DataFrame({'coid': pd.Series(dtype='object'),
-                                  'mdate': pd.Series(dtype='datetime64[ns]'),
-                                  'key3': pd.Series(dtype='object'),
-                                  'no': pd.Series(dtype='object')
-                                    })
+            # return pd.DataFrame({'coid': pd.Series(dtype='object'),
+            #                     'mdate': pd.Series(dtype='datetime64[ns]'),
+            #                     'key3': pd.Series(dtype='object'),
+            #                     'no': pd.Series(dtype='object')
+            #                         })
+            fabricate_output = {}
+            columns_type = tejapi.table_info(table)['columns']
+            for i in columns:
+
+                if 'char' in columns_type[i]['type']:
+                    fabricate_output[i] = pd.Series(dtype='object')
+
+                elif 'datetime' in columns_type[i]['type']:
+                    fabricate_output[i] = pd.Series(dtype='datetime64[ns]')
+
+                else:
+                    fabricate_output[i] = pd.Series(dtype='float64')
+
+            return pd.DataFrame(fabricate_output)
         
         # modify the name of the columns from upper case to lower case.
         lower_columns = {i:i.lower() for i in data_sets.columns}
         data_sets = data_sets.rename(columns=lower_columns)
 
-        # select certain fin_type
-        data_sets = get_certain_fin_type(data_sets, fin_type)
-
         # get most recent announce date of the company
-        fin_date = get_announce_date(tickers, start = start, end = end)
-        fin_date = get_certain_fin_type(fin_date, fin_type)
-        data_sets = fin_date.merge(data_sets, how = 'left', on = ['coid', 'mdate', 'key3','no'])
+        fin_date = get_announce_date(tickers, start = start, end = end, fin_type = fin_type)
+        data_sets = fin_date.merge(data_sets, how = 'left', on = ['coid', 'mdate', 'key3', 'no'])
+
         del fin_date
         gc.collect()
         
-        # select columns
+        # Select columns
         try:
             data_sets = data_sets.loc[:,columns]
         
         except:
-             # Check selected columns exist in the columns of dataframe
-            selected_columns = []
-            for i in columns:
-                if i in data_sets.columns:
-                    selected_columns.append(i)
+            # Check selected columns exist in the columns of dataframe
+            selected_columns = [i for i in columns if i in data_sets.columns]
             
-            # Drop duplicates
+            # Ensure `data_sets` does not have duplicate rows.
             selected_columns = list(set(selected_columns))
             
             # Select columns again
             data_sets = data_sets.loc[:,selected_columns]
 
-        # parallel fin_type to columns 
+        # Parallel fin_type (key3) to columns 
         data_sets = fin_pivot(data_sets, remain_keys=['coid','mdate','no','annd'])
         
         # Cut off the duplicate rows
-        data_sets = data_sets.sort_values(['coid','mdate', 'annd'])
-        data_sets = data_sets.drop_duplicates(subset=['coid', 'annd'], keep = 'last')
+        # data_sets = data_sets.sort_values(['coid','mdate', 'annd'])
+        # data_sets = data_sets.drop_duplicates(subset=['coid','annd'], keep = 'last')
         
         return data_sets
+        
+        # except: 
+        #     print(tickers, columns)
     
     # Define the meta of the dataframe
     meta = _get_data(table = table, tickers = '2330', columns = columns, start = start, end =end, fin_type= fin_type)
@@ -229,39 +281,94 @@ def get_fin_auditor(table, tickers, columns=[], **kwargs):
     ticker_partitions = get_partition_group(tickers=tickers, npartitions=npartitions)
     
     # Submit jobs to the parallel cores
-    data_sets = dd.from_delayed([dask.delayed(_get_data)(table=table, tickers = tickers[(i-1)*npartitions:i*npartitions]+['2330'], columns = columns, start = start, end = end, fin_type = fin_type) for i in range(1, ticker_partitions)], meta = meta)
+    data_sets = dd.from_delayed([dask.delayed(_get_data)(table=table, tickers = tickers[(i-1)*npartitions:i*npartitions], columns = columns, start = start, end = end, fin_type = fin_type) for i in range(1, ticker_partitions)], meta = meta)
     
     # If ticker smaller than defaulted partitions, then transform it into defaulted partitions
     if data_sets.npartitions < npartitions:
         data_sets = data_sets.repartition(npartitions=npartitions)
 
-    data_sets = data_sets.drop_duplicates(subset=['coid', 'annd'], keep = 'last')
+    data_sets = data_sets.drop_duplicates(subset=['coid','annd'], keep = 'last')
 
     return data_sets
 
 
 def get_announce_date(tickers, **kwargs):
-    start = kwargs.get('start', default_start)
-    end = kwargs.get('end', default_end)
+    start = kwargs.get('start', para.default_start)
+    end = kwargs.get('end', para.default_end)
+    fin_type = kwargs.get('fin_type', ['A', 'Q', 'TTM'])
+
     data = tejapi.get('TWN/AINVFINQA',
                     coid = tickers,
                     paginate = True,
+                    key3 = fin_type,
                     chinese_column_name=False, 
                     mdate = {'gte':start, 'lte':end},
-                    opts = {'sort':{'coid.asc', 'mdate.asc', 'annd.asc'}})
+                    opts = {'sort':{'coid.asc', 'mdate.asc', 'key3.asc', 'no.asc','annd.asc'}})
+
+    
+    data = parallize_annd_process(data)
+    # Keep the last row when there are multiple rows with the same keys
+    # The last row represents the data with the greatest mdate
+    # data = data.drop_duplicates(subset=['coid', 'key3','annd'], keep='last')
+    data['ver'] = data['mdate'].astype(str) + '-' + data['no']
+    data = data.groupby(['coid', 'key3','annd'], as_index=False).max()
+    data = data.groupby(['coid','key3']).apply(lambda x: np.fmax.accumulate(x, axis=0))
+    data = parallelize_ver_process(data)
+    data.drop(columns = 'ver')
+
+    return data
+
+def parallize_annd_process(data):
+    # annd
+    # 創建一個向量化的函數
+    vectorized_annd_adjusted = np.vectorize(annd_adjusted)
+
+    # 所有不同的發布日
+    uni_dates = pd.to_datetime(data['annd'].unique())
+
+    # 傳入 ExchangeCalendar 物件
+    result = vectorized_annd_adjusted(para.exc, uni_dates)
+
+    # Create a mapping dictionary
+    dict_map = {uni_dates[i]:result[i] for i in range(len(result))}
+
+    data['annd'] = data['annd'].map(dict_map)
     
     return data
 
-def get_certain_fin_type(data, fin_type):
-    if type(fin_type) is str:
-        # data = data.query(f'key3 == "{fin_type}"')
-        data = data.loc[data['key3']==fin_type,:]
-
-    else:
-        # data = data.query(f'key3.isin({fin_type})')
-        data = data.loc[data['key3'].isin(fin_type),:]
+def parallelize_ver_process(data):
+    def parallel_process(func, data):
+        vectorized = np.vectorize(func)
+        uni_dates = data['ver'].unique()
+        result = vectorized(uni_dates)
+        dict_map = {uni_dates[i]:result[i] for i in range(len(result))}
+        return dict_map
     
+    # mdate
+    mdate_dict = parallel_process(split_mdate, data)
+    data['mdate'] = data['ver'].map(mdate_dict)
+
+    # no
+    no_dict = parallel_process(split_no, data)
+    data['no'] = data['ver'].map(no_dict)
+
     return data
+
+
+def annd_adjusted(ExchangeCalendar, date):
+        if ExchangeCalendar.is_session(date):
+            return date
+        
+        return ExchangeCalendar.next_open(date)
+
+def split_mdate(string:str):
+    mdate = string.split('-')[:2]
+    mdate = pd.to_datetime('-'.join(mdate))
+    return mdate
+
+def split_no(string:str):
+    no = string.split('-')[-1]
+    return no
 
 def fin_pivot(df, remain_keys):
     # for loop execute pviot function
@@ -293,9 +400,9 @@ def pivot(df, remain_keys, pattern):
 
 def generate_multicalendars(tickers, **kwargs):
     # Setting defualt value of the parameters
-    start = kwargs.get('start', default_start)
-    end = kwargs.get('end', default_end)
-    npartitions = kwargs.get('npartitions', npartitions_local)
+    start = kwargs.get('start', para.default_start)
+    end = kwargs.get('end', para.default_end)
+    npartitions = kwargs.get('npartitions', para.npartitions_local)
 
     def get_daily_calendar(tickers:list):
         def get_data(ticker):
@@ -326,16 +433,16 @@ def generate_multicalendars(tickers, **kwargs):
     fin_calendar = dd.from_delayed([dask.delayed(get_daily_calendar)(tickers[(i-1)*npartitions:i*npartitions]) for i in range(1, ticker_partitions)], meta = meta)
     
     # If ticker smaller than defaulted partitions, then transform it into defaulted partitions
-    if fin_calendar.npartitions < npartitions_local:
+    if fin_calendar.npartitions < para.npartitions_local:
         fin_calendar = fin_calendar.repartition(npartitions=npartitions)
 
     return fin_calendar
 
 def generate_multicalendars_dask(tickers, **kwargs):
     # Setting defualt value of the parameters
-    start = kwargs.get('start', default_start)
-    end = kwargs.get('end', default_end)
-    npartitions = kwargs.get('npartitions', npartitions_local)
+    start = kwargs.get('start', para.default_start)
+    end = kwargs.get('end', para.default_end)
+    npartitions = kwargs.get('npartitions', para.npartitions_local)
 
 
     def get_daily_calendar(tickers:list):
@@ -378,3 +485,6 @@ def fillna_multicolumns(df):
 
 def get_partition_group(tickers:list, npartitions):
     return (len(tickers)//npartitions) + 1 if len(tickers)%npartitions ==0 else (len(tickers)//npartitions) + 2
+
+
+
