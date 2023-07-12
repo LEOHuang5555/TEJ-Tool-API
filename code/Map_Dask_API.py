@@ -31,25 +31,25 @@ def get_fin_data(table, tickers, columns=[], **kwargs):
         
         # 
         if len(data_sets) < 1:
-            # return pd.DataFrame({'coid': pd.Series(dtype='object'),
-            #                       'mdate': pd.Series(dtype='datetime64[ns]'),
-            #                       'key3': pd.Series(dtype='object'),
-            #                       'no': pd.Series(dtype='object'),
-            #                       'annd':pd.Series(dtype='datetime64[ns]')
-            #                         })
-            fabricate_output = {}
-            columns_type = tejapi.table_info(table)['columns']
-            for i in columns:
-                if 'char' in columns_type[i]['type']:
-                    fabricate_output[i] = pd.Series(dtype='object')
+            return pd.DataFrame({'coid': pd.Series(dtype='object'),
+                                  'mdate': pd.Series(dtype='datetime64[ns]'),
+                                  'key3': pd.Series(dtype='object'),
+                                  'no': pd.Series(dtype='object'),
+                                  'annd':pd.Series(dtype='datetime64[ns]')
+                                    })
+            # fabricate_output = {}
+            # columns_type = tejapi.table_info(table)['columns']
+            # for i in columns:
+            #     if 'char' in columns_type[i]['type']:
+            #         fabricate_output[i] = pd.Series(dtype='object')
 
-                elif 'datetime' in columns_type[i]['type']:
-                    fabricate_output[i] = pd.Series(dtype='datetime64[ns]')
+            #     elif 'datetime' in columns_type[i]['type']:
+            #         fabricate_output[i] = pd.Series(dtype='datetime64[ns]')
 
-                else:
-                    fabricate_output[i] = pd.Series(dtype='float64')
+            #     else:
+            #         fabricate_output[i] = pd.Series(dtype='float64')
 
-            return pd.DataFrame(fabricate_output)
+            # return pd.DataFrame(fabricate_output)
 
         # parallel fin_type to columns 
         data_sets = fin_pivot(data_sets, remain_keys=['coid', 'mdate', 'no', 'annd'])
@@ -103,17 +103,20 @@ def get_trading_data(table, tickers, columns = [], **kwargs):
                         opts = {'columns':columns, 'sort':{'coid.asc', 'mdate.asc'}})
         # 
         if len(data) < 1:
-            fabricate_output = {}
-            columns_type = tejapi.table_info(table)['columns']
-            for i in columns:
-                if 'char' in columns_type[i]['type']:
-                    fabricate_output[i] = pd.Series(dtype='object')
+            # fabricate_output = {}
+            # columns_type = tejapi.table_info(table)['columns']
+            # for i in columns:
+            #     if 'char' in columns_type[i]['type']:
+            #         fabricate_output[i] = pd.Series(dtype='object')
 
-                elif 'datetime' in columns_type[i]['type']:
-                    fabricate_output[i] = pd.Series(dtype='datetime64[ns]')
+            #     elif 'datetime' in columns_type[i]['type']:
+            #         fabricate_output[i] = pd.Series(dtype='datetime64[ns]')
 
-                else:
-                    fabricate_output[i] = pd.Series(dtype='float64')
+            #     else:
+            #         fabricate_output[i] = pd.Series(dtype='float64')
+            return pd.DataFrame({'coid': pd.Series(dtype='object'),
+                                  'mdate': pd.Series(dtype='datetime64[ns]')
+                                    })
         
         return data
     
@@ -124,13 +127,16 @@ def get_trading_data(table, tickers, columns = [], **kwargs):
     ticker_partitions = get_partition_group(tickers=tickers, npartitions=npartitions)
     
     # Submit jobs to the parallel cores
-    data_sets = dd.from_delayed([dask.delayed(get_data)(table, tickers[(i-1)*npartitions:i*npartitions], columns, start, end) for i in range(1, ticker_partitions)], meta = meta)
+    data_sets = dd.from_delayed([dask.delayed(get_data)(table, tickers[(i-1)*npartitions:i*npartitions]+['2330'], columns, start, end) for i in range(1, ticker_partitions)], meta = meta)
     
     # If ticker smaller than defaulted partitions, then transform it into defaulted partitions
     if data_sets.npartitions < npartitions:
         data_sets = data_sets.repartition(npartitions=npartitions)
 
     data_sets = data_sets.drop_duplicates(subset=['coid', 'mdate'], keep = 'last')
+    
+    if '2330' not in tickers:
+        data_sets = data_sets.loc[(~data_sets['coid']=='2330'),:]
 
     return data_sets
 
@@ -217,25 +223,25 @@ def get_fin_auditor(table, tickers, columns=[], **kwargs):
         columns.append('annd')
         # print(fin_type)
         if len(data_sets) < 1:
-            # return pd.DataFrame({'coid': pd.Series(dtype='object'),
-            #                     'mdate': pd.Series(dtype='datetime64[ns]'),
-            #                     'key3': pd.Series(dtype='object'),
-            #                     'no': pd.Series(dtype='object')
-            #                         })
-            fabricate_output = {}
-            columns_type = tejapi.table_info(table)['columns']
-            for i in columns:
+            return pd.DataFrame({'coid': pd.Series(dtype='object'),
+                                'mdate': pd.Series(dtype='datetime64[ns]'),
+                                'key3': pd.Series(dtype='object'),
+                                'no': pd.Series(dtype='object')
+                                    })
+            # fabricate_output = {}
+            # columns_type = tejapi.table_info(table)['columns']
+            # for i in columns:
 
-                if 'char' in columns_type[i]['type']:
-                    fabricate_output[i] = pd.Series(dtype='object')
+            #     if 'char' in columns_type[i]['type']:
+            #         fabricate_output[i] = pd.Series(dtype='object')
 
-                elif 'datetime' in columns_type[i]['type']:
-                    fabricate_output[i] = pd.Series(dtype='datetime64[ns]')
+            #     elif 'datetime' in columns_type[i]['type']:
+            #         fabricate_output[i] = pd.Series(dtype='datetime64[ns]')
 
-                else:
-                    fabricate_output[i] = pd.Series(dtype='float64')
+            #     else:
+            #         fabricate_output[i] = pd.Series(dtype='float64')
 
-            return pd.DataFrame(fabricate_output)
+            # return pd.DataFrame(fabricate_output)
         
         # modify the name of the columns from upper case to lower case.
         lower_columns = {i:i.lower() for i in data_sets.columns}
