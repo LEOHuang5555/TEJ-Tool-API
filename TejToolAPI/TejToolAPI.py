@@ -5,7 +5,8 @@ import gc
 from . import parameters as para
 from . import Map_Dask_API as dask_api
 import dask
-
+from .meta_types import Meta_Types 
+                         
 
 # 映射函數 (dask_version)
 funct_map = {
@@ -21,31 +22,18 @@ def get_history_data(ticker:list, columns:list = [], fin_type:list = ['A','Q','T
     end = kwargs.get('end', para.default_end)
     transfer_to_chinese = kwargs.get('transfer_to_chinese', False)
     npartitions = kwargs.get('npartitions',  para.npartitions_local)
-    all_tables = triggers(ticker = ticker, columns= columns, start= start, end= end, fin_type= fin_type, include_self_acc= include_self_acc, npartitions = npartitions)
+    require_annd = kwargs.get('require_annd', False)
 
-    def process_fin_data(all_tables, variable, tickers, start, end):
-        # transfer to daily basis
-        # days = para.dask_mpf.generate_multicalendars(tickers, start = start, end = end)
-        # all_tables[variable] = dd.merge(days, all_tables[variable], left_on=['coid','all_dates'], right_on=['coid', 'annd'], how='left')
+    # Shift start date 180 days backward.
+    start_dt = pd.to_datetime(start)
+    shift_start = start_dt - pd.Timedelta(180, 'd')
+    org_start = start_dt.strftime('%Y-%m-%d')
+    shift_start = shift_start.strftime('%Y-%m-%d')
 
-        days = para.exc.calendar
-        days = days.rename(columns = {'zdate':'all_dates'})
-        all_tables[variable] = dd.merge(days, all_tables[variable], left_on=['all_dates'], right_on=['annd'], how='left')
-        
-        # Drop mdate column
-        all_tables[variable] = all_tables[variable].drop(columns = 'mdate')
-
-        # Delete the redundant dataframe to release memory space
-        del days
-        gc.collect()
-
-        # Filling NaN with the precending value
-        # all_tables[variable] = all_tables[variable].groupby('coid', as_index = False).apply(para.dask_mpf.fillna_multicolumns, meta = all_tables[variable])
-        
-        return all_tables[variable]
+    # Triggers 
+    all_tables = triggers(ticker = ticker, columns= columns, start= shift_start, end= end, fin_type= fin_type, include_self_acc= include_self_acc, npartitions = npartitions)
     
-       
-    # 針對自結損益和財簽資料作處理
+    # Combind fin_self_acc and fin_auditor
     try:
         # Concate fin_self_acc with fin_auditor
         data_concat = dd.concat([all_tables['fin_self_acc'], all_tables['fin_auditor']]).reset_index(drop=True)
@@ -55,7 +43,6 @@ def get_history_data(ticker:list, columns:list = [], fin_type:list = ['A','Q','T
         all_tables['fin_auditor'] = process_fin_data(all_tables=all_tables, variable='fin_auditor', tickers=ticker, start=start, end= end)
         
         del all_tables['fin_self_acc']
-        # return all_tables
 
     except:
         if 'fin_auditor' in all_tables.keys():
@@ -67,66 +54,95 @@ def get_history_data(ticker:list, columns:list = [], fin_type:list = ['A','Q','T
         else:
             pass
 
-    # 搜尋觸發到那些 table
+    # Collect variables that being triggered
     trigger_tables = [i for i in all_tables.keys() if i in para.fin_invest_tables['TABLE_NAMES'].unique().tolist()]
 
-    # 根據 OD 進行排序
+    # Sort by OD
     trigger_tables.sort(key = lambda x: para.map_table.loc[para.map_table['TABLE_NAMES']==x, 'OD'].item())
 
-    # tables 兩兩合併
+    # Consecutive merge.
     history_data = consecutive_merge(all_tables,  trigger_tables)
-    history_data = history_data.drop(columns=[i for i in history_data.columns if i in para.drop_keys])
-    history_data = history_data.drop_duplicates(subset=['coid', 'mdate'], keep='last').repartition(npartitions=npartitions)
-    history_data = history_data.groupby('coid', group_keys = False).apply(dask_api.fillna_multicolumns, meta = history_data)
 
-    if transfer_to_chinese is False:
-        # transfer to Chinese version
-        lang_map = transfer_language_columns(history_data.columns, isEnglish=True)
-        history_data = history_data.rename(columns= lang_map)
-
-    elif transfer_to_chinese is True:
-        # transfer to English version
-        lang_map = transfer_language_columns(history_data.columns, isEnglish=False)
-        history_data = history_data.rename(columns= lang_map)
-
+    # Drop redundant columns of the merged table.
+    if require_annd:
+        history_data = history_data.drop(columns=[i for i in history_data.columns if i in para.drop_keys])
     else:
-        pass
+        history_data = history_data.drop(columns=[i for i in history_data.columns if i in para.drop_keys+['fin_date', 'mon_sales_date', 'share_date']])
 
-    return history_data.compute(meta = history_data)
+    # Transfer to pandas dataframe
+    # history_data = history_data.compute(meta = history_data)
+    history_data = history_data.compute(meta = Meta_Types.all_meta)
 
+    # Drop repeat rows from the table.
+    history_data = history_data.drop_duplicates(subset=['coid', 'mdate'], keep='last')
+
+    # Sort values by coid and mdate
+    history_data = history_data.sort_values(['coid', 'mdate']).reset_index(drop=True)
+
+    # Apply forward value to fill the precending NaN.
+    history_data = history_data.groupby('coid', group_keys = False).apply(dask_api.fillna_multicolumns)
+
+    # Truncate resuly by user-setted start.
+    history_data = history_data.loc[history_data.mdate >= org_start,:]
+
+    # Transfer columns to abbreviation text.
+    # print(history_data.columns)
+    lang_map = transfer_language_columns(history_data.columns, isChinese=transfer_to_chinese)
+    history_data = history_data.rename(columns= lang_map)
+    history_data = history_data.reset_index(drop=True)
+    
+    return history_data
+
+def process_fin_data(all_tables, variable, tickers, start, end):
+    # transfer to daily basis
+    days = para.exc.calendar
+    days = days.rename(columns = {'zdate':'all_dates'})
+    all_tables[variable] = all_tables[variable].rename(columns = {'mdate':'fin_date'})
+    all_tables[variable] = dd.merge(days, all_tables[variable], left_on=['all_dates'], right_on=['annd'], how='left')
+    
+    # Drop mdate column
+    # all_tables[variable] = all_tables[variable].drop(columns = 'mdate')
+
+    # Delete the redundant dataframe to release memory space
+    del days
+    gc.collect()
+    
+    return all_tables[variable]
 
 def to_daskDataFrame(locals, indexs, npartitions=para.npartitions_local):
     for i in indexs:
         locals[i] = dd.from_pandas(locals[i], npartitions=npartitions)
     return locals
 
-def transfer_language_columns(columns, isEnglish = True):
-    def get_col_name(col, isEnglish):
-        transfer_lang = 'ENG_COLUMN_NAMES' if isEnglish else 'CHN_COLUMN_NAMES'
-
+def transfer_language_columns(columns, isChinese = False):
+    def get_col_name(col, isChinese):
+        transfer_lang = 'CHN_COLUMN_NAMES' if isChinese else 'ENG_COLUMN_NAMES'
         try:
             col_name = search_columns([col])[transfer_lang].dropna().drop_duplicates(keep='last').item()
 
         except:
+            # print(col)
             col_name = search_columns([col])[transfer_lang].dropna().tail(1).item()
 
         return col_name if col_name else col
     
     mapping = {}
     for col in columns:
-        # 將 _A, _Q, _TTM 等字串移除
+        # Remove  _A, _Q, _TTM
         check_fin_type = [col.__contains__('_A'), col.__contains__('_Q'), col.__contains__('_TTM')]
         if any(check_fin_type):
             col_stripped = col.split('_')[:-1]
             fin_type = '_' + col.split('_')[-1]
-            # 若欄位名稱本身含有 '_'，則要將底線組合回去
+            # If the variables contain '_', then join '_' into the variables.
             if type(col_stripped) is list:
                 col_stripped = '_'.join(col_stripped)
+
         else:
             col_stripped = col
             fin_type = ''
-        # 尋找對應中文欄位名稱
-        col_name = get_col_name(col_stripped, isEnglish)
+
+        # Find the corresponding Chinese column names.
+        col_name = get_col_name(col_stripped, isChinese)
         if col_name not in mapping.keys():
             # 將對應關係加入 mapping
             mapping[col] = f"{col_name}{fin_type}"
@@ -154,7 +170,12 @@ def triggers(ticker:list, columns:list = [], fin_type:list = ['A','Q','TTM'],  i
     columns = get_internal_code(columns)    
 
     # Kick out `coid` and `mdate` from
-    columns = [i for i in columns if i !='coid' or i!='mdate']
+    for i in ['coid', 'mdate','key3', 'no','sem','fin_type', 'curr', 'fin_ind']:
+        try: 
+            columns.remove(i)
+        except:
+            pass
+    # columns = [i for i in columns if i !='coid' or i!='mdate']
 
     # Qualify the table triggered by the given `columns`
     trigger_tables = search_table(columns)
@@ -168,7 +189,6 @@ def triggers(ticker:list, columns:list = [], fin_type:list = ['A','Q','TTM'],  i
         trigger_tables = trigger_tables.loc[trigger_tables['TABLE_NAMES']!='fin_self_acc',:]
 
     for table_name in trigger_tables['TABLE_NAMES'].unique():
-        # print(table_name)
         selected_columns = trigger_tables.loc[trigger_tables['TABLE_NAMES']==table_name, 'COLUMNS'].tolist()
         api_code = para.table_API.loc[para.table_API['TABLE_NAMES']==table_name, 'API_CODE'].item()
         api_table = para.fin_invest_tables.loc[para.fin_invest_tables['TABLE_NAMES']==table_name,'API_TABLE'].item()
@@ -197,41 +217,52 @@ def consecutive_merge(local_var, loop_array):
     data = local_var['trading_calendar']
 
     for i in range(len(loop_array)):
-        right_keys = table_keys.loc[table_keys['TABLE_NAMES']==loop_array[i], 'KEYS'].tolist()
-        # dask merge
-        # print(loop_array[i])
-        data = dd.merge(data, local_var[loop_array[i]], left_on = ['coid', 'mdate'], right_on = right_keys, how = 'left', suffixes = ('','_surfeit'))
+        if loop_array[i] == 'APISTOCK':
+            # get coid attribution
+            data = dd.merge(data, local_var[loop_array[i]], on = 'coid', how = 'left', suffixes = ('','_surfeit'))
+            
+        else:
+            right_keys = table_keys.loc[table_keys['TABLE_NAMES']==loop_array[i], 'KEYS'].tolist()
+            # Merge tables by dask merge.
+            data = dd.merge(data, local_var[loop_array[i]], left_on = ['coid', 'mdate'], right_on = right_keys, how = 'left', suffixes = ('','_surfeit'))
         
-        # Clear the right table to release memory
+        # Clear the right table to release memory.
         del local_var[loop_array[i]]
         gc.collect()
         
-        # Drop surfeit columns
+        # Drop surfeit columns.
         data = data.loc[:,~data.columns.str.contains('_surfeit')]
 
-    # Ensure the type of mdate is appropriate
+    # Ensure the type of mdate is appropriate.
     data['mdate'] = dd.to_datetime(data['mdate'])
 
     return data
 
+def keep_repo_date(data):
+    if 'fin_date' in data.columns:
+       data = data.rename({'fin_date_surfeit':'fin_date'})
+
+    return data
+
 def get_trading_calendar(tickers, **kwargs):
-    # Setting default value of the corresponding parameters
+    # Setting default value of the corresponding parameters.
     start = kwargs.get('start', para.default_start)
     end = kwargs.get('end', para.default_end)
     npartitions = kwargs.get('npartitions',  para.npartitions_local)
 
     def get_data(tickers):
         # trading calendar
-        data = tejapi.get('TWN/APIPRCD',
+        data = tejapi.fastget('TWN/APIPRCD',
                         coid = tickers,
                         paginate = True,
                         chinese_column_name=False,
                         mdate = {'gte':start,'lte':end},
                         opts = {'columns':['coid','mdate'], 'sort':{'coid.asc', 'mdate.asc'}})
-        if len(data)>1:
-            return data
-        else:
+        if len(data)<1:
             return pd.DataFrame({'coid': pd.Series(dtype='object'), 'mdate': pd.Series(dtype='datetime64[ns]')})
+        
+        return data
+            
     
     # Define the meta of the dataframe
     meta = pd.DataFrame({'coid': pd.Series(dtype='object'), 'mdate': pd.Series(dtype='datetime64[ns]')})
